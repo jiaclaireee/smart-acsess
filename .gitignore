@@ -1,0 +1,9 @@
+backend/.env
+proj creds.txt
+run-commands-notes.txt
+smart-acsess run commands.txt
+frontend/node_modules/
+frontend/.nuxt/
+frontend/.output/
+backend/vendor/
+backend/.phpunit.result.cache

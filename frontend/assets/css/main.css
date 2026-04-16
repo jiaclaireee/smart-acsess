@@ -1,0 +1,25 @@
+@import url("https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body { background: #ffffff; }
+
+@layer base {
+  h1, h2, h3 { @apply font-futura; }
+}
+
+@layer components {
+  .sa-card { @apply bg-white border border-slate-200 rounded-2xl shadow-soft; }
+  .sa-input { @apply w-full border border-slate-200 rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-uplbGreen/25 focus:border-uplbGreen; }
+  .sa-label { @apply text-xs font-medium text-slate-600; }
+  .sa-btn { @apply inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition active:scale-[0.99]; }
+  .sa-btn-primary { @apply sa-btn bg-uplbGreen text-white hover:opacity-90; }
+  .sa-btn-danger { @apply sa-btn bg-uplbRed text-white hover:opacity-90; }
+  .sa-btn-accent { @apply sa-btn bg-uplbYellow text-slate-900 hover:opacity-90; }
+  .sa-btn-ghost { @apply sa-btn bg-white border border-slate-200 hover:bg-slate-50; }
+
+  .sa-th { @apply bg-uplbGreen text-white px-4 py-3 text-left text-xs font-semibold tracking-wide; }
+  .sa-td { @apply px-4 py-3 text-xs text-slate-700 border-t border-slate-100; }
+}

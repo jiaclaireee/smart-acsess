@@ -1,0 +1,80 @@
+<?php
+
+return [
+    'context_ttl_minutes' => (int) env('CHATBOT_CONTEXT_TTL', 30),
+    'history_ttl_minutes' => (int) env('CHATBOT_HISTORY_TTL', 240),
+    'history_limit' => (int) env('CHATBOT_HISTORY_LIMIT', 20),
+    'knowledge' => [
+        'disk' => env('CHATBOT_KNOWLEDGE_DISK', 'local'),
+        'path' => trim((string) env('CHATBOT_KNOWLEDGE_PATH', 'private/chatbot-knowledge'), '/'),
+        'version' => (int) env('CHATBOT_KNOWLEDGE_VERSION', 3),
+        'refresh_on_ask' => (bool) env('CHATBOT_KNOWLEDGE_REFRESH_ON_ASK', true),
+    ],
+    'resource_context_limit' => (int) env('CHATBOT_RESOURCE_CONTEXT_LIMIT', 20),
+    'sample_rows_limit' => (int) env('CHATBOT_SAMPLE_ROWS_LIMIT', 5),
+    'lookup_result_limit' => (int) env('CHATBOT_LOOKUP_RESULT_LIMIT', 20),
+    'top_group_limit' => (int) env('CHATBOT_TOP_GROUP_LIMIT', 6),
+    'trend_limit' => (int) env('CHATBOT_TREND_LIMIT', 12),
+    'interpretation' => [
+        'clarify_below' => (float) env('CHATBOT_INTERPRETATION_CLARIFY_BELOW', 0.45),
+        'ambiguous_source_gap' => (float) env('CHATBOT_INTERPRETATION_AMBIGUOUS_SOURCE_GAP', 4.0),
+    ],
+    'training' => [
+        'example_limit' => (int) env('CHATBOT_TRAINING_EXAMPLE_LIMIT', 40),
+    ],
+    'projection' => [
+        'lookback_days' => (int) env('CHATBOT_PROJECTION_LOOKBACK_DAYS', 90),
+        'daily_limit' => (int) env('CHATBOT_PROJECTION_DAILY_LIMIT', 120),
+        'expected_multiplier' => (float) env('CHATBOT_PROJECTION_EXPECTED_MULTIPLIER', 1.05),
+        'high_multiplier' => (float) env('CHATBOT_PROJECTION_HIGH_MULTIPLIER', 1.12),
+        'major_event_expected_multiplier' => (float) env('CHATBOT_PROJECTION_MAJOR_EVENT_EXPECTED_MULTIPLIER', 1.2),
+        'major_event_high_multiplier' => (float) env('CHATBOT_PROJECTION_MAJOR_EVENT_HIGH_MULTIPLIER', 1.35),
+    ],
+    'external_knowledge' => [
+        'enabled' => (bool) env('CHATBOT_EXTERNAL_KNOWLEDGE_ENABLED', true),
+        'references' => [
+            [
+                'id' => 'up_system_overview',
+                'title' => 'About the University of the Philippines',
+                'url' => 'https://up.edu.ph/sdg2025-about-up',
+                'summary' => 'Official UP sources describe the University of the Philippines as the national university of the Philippines, established in 1908 and operating as a system of eight constituent universities across multiple campuses.',
+                'keywords' => ['university of the philippines', 'up system', 'national university', 'constituent universities', 'campuses'],
+                'tags' => ['system'],
+            ],
+            [
+                'id' => 'uplb_overview',
+                'title' => 'UPLB Graduate School About Us',
+                'url' => 'https://gs.uplb.edu.ph/about-us/',
+                'summary' => 'Official UPLB sources identify UP Los Banos as one of the eight constituent universities of the UP System and describe it as a public academic, research, and extension institution in Los Banos, Laguna.',
+                'keywords' => ['uplb', 'up los banos', 'laguna', 'constituent university'],
+                'tags' => ['uplb'],
+            ],
+            [
+                'id' => 'uplb_commencement_reference',
+                'title' => 'UPLB 51st Commencement Exercises',
+                'url' => 'https://uplb.edu.ph/uplb-event/uplb-51st-commencement-exercises/',
+                'summary' => 'The official UPLB website maintains a commencement event reference for the UPLB 51st Commencement Exercises, confirming commencement as a major university event on the Los Banos campus.',
+                'keywords' => ['uplb commencement', 'commencement exercises', 'graduation', 'commencement', 'uplb event'],
+                'tags' => ['uplb', 'event'],
+                'known_dates' => [],
+            ],
+            [
+                'id' => 'uplb_our_reference',
+                'title' => 'UPLB Office of the University Registrar',
+                'url' => 'https://our.uplb.edu.ph/uplb-new-first-year-appeals-guidelines-first-semester-2025-2026/',
+                'summary' => 'Official UPLB OUR resources publish academic-cycle notices for the 2025-2026 academic year and help anchor student and campus activity questions in current registrar communications.',
+                'keywords' => ['uplb our', 'office of the university registrar', '2025 2026', 'academic year', 'appeals'],
+                'tags' => ['uplb', 'registrar'],
+            ],
+        ],
+    ],
+    'llm' => [
+        'enabled' => (bool) env('CHATBOT_LLM_ENABLED', false),
+        'provider' => env('CHATBOT_LLM_PROVIDER', 'openai_compatible'),
+        'base_url' => rtrim((string) env('CHATBOT_LLM_BASE_URL', 'https://api.openai.com/v1'), '/'),
+        'api_key' => env('CHATBOT_LLM_API_KEY'),
+        'model' => env('CHATBOT_LLM_MODEL', 'gpt-4o-mini'),
+        'timeout' => (int) env('CHATBOT_LLM_TIMEOUT', 20),
+        'planning_enabled' => (bool) env('CHATBOT_LLM_PLANNING_ENABLED', true),
+    ],
+];
