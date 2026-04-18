@@ -1,6 +1,32 @@
-FROM composer:2 AS vendor
+FROM php:8.2-cli-bookworm AS php-base
 
 WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        git \
+        unzip \
+        libfreetype6-dev \
+        libjpeg62-turbo-dev \
+        libpng-dev \
+        libxml2-dev \
+        libonig-dev \
+        libpq-dev \
+        libzip-dev \
+    && docker-php-ext-configure gd --with-freetype --with-jpeg \
+    && docker-php-ext-install \
+        dom \
+        gd \
+        mbstring \
+        pdo_mysql \
+        pdo_pgsql \
+        zip \
+    && rm -rf /var/lib/apt/lists/*
+
+
+FROM php-base AS vendor
+
+COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
 COPY composer.json composer.lock ./
 
@@ -12,21 +38,7 @@ RUN composer install \
     --optimize-autoloader
 
 
-FROM php:8.2-cli-bookworm
-
-WORKDIR /app
-
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-        git \
-        unzip \
-        libpq-dev \
-        libzip-dev \
-    && docker-php-ext-install \
-        pdo_mysql \
-        pdo_pgsql \
-        zip \
-    && rm -rf /var/lib/apt/lists/*
+FROM php-base
 
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 COPY --from=vendor /app/vendor ./vendor
