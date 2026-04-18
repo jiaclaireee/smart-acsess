@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\ConnectedDatabase;
+use App\Services\AuditTrailService;
 use App\Services\Chatbot\ChatbotKnowledgeIndexService;
 use App\Services\Database\DatabaseConnectorException;
 use App\Services\Database\DatabaseConnectorManager;
@@ -37,6 +38,22 @@ class ConnectedDatabaseController extends Controller
         $this->fillDatabase($database, $data);
         $database->save();
         $knowledgeIndex->invalidateDatabase($database->id);
+
+        app(AuditTrailService::class)->record(
+            $request,
+            'Database Connections',
+            'Add Database',
+            'Saved a new database connection for SMART-ACSESS integrations.',
+            [
+                'database_id' => $database->id,
+                'database_name' => $database->name,
+                'database_type' => $database->type,
+                'resource_label' => $database->resourceLabel(),
+                'host' => $database->publicMetadata()['host'] ?? null,
+            ],
+            ConnectedDatabase::class,
+            $database->id,
+        );
 
         return response()->json($database->publicMetadata(), 201);
     }

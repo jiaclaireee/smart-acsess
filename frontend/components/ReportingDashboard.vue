@@ -193,19 +193,136 @@
             <div class="text-lg font-bold">{{ report.chart.title }}</div>
             <div class="mt-1 text-xs text-slate-500">{{ chartSubtitle }}</div>
           </div>
-          <span class="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-600">
-            {{ filters.graphType === "pie" ? "Top grouped segments" : "Chart-ready dataset" }}
-          </span>
+          <div class="flex flex-wrap items-center justify-end gap-2">
+            <span class="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[11px] text-emerald-700">
+              Click a data point to inspect matching rows
+            </span>
+            <span class="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-600">
+              {{ filters.graphType === "pie" ? "Top grouped segments" : "Chart-ready dataset" }}
+            </span>
+          </div>
         </div>
 
         <div v-if="chartHasData" class="mt-4 h-[360px]">
           <ClientOnly>
-            <VChart class="h-full w-full" :option="chartOption" autoresize />
+            <VChart class="h-full w-full" :option="chartOption" autoresize @click="handleChartClick" />
           </ClientOnly>
         </div>
         <div v-else class="mt-4 rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-10 text-center text-sm text-slate-500">
           {{ report.chart.empty_message || "No chart data is available for the selected filters." }}
         </div>
+      </div>
+
+      <div v-if="filters.graphType !== 'table'" class="sa-card p-5">
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <div class="text-xs text-slate-500">Chart Drill-down</div>
+            <div class="text-lg font-bold">
+              {{ drilldown?.title || "Inspect the exact rows behind any chart segment" }}
+            </div>
+            <div class="mt-1 text-xs text-slate-500">
+              {{
+                drilldown
+                  ? drilldown.description
+                  : "Select a bar, slice, or point above to reveal the matching rows without leaving the dashboard."
+              }}
+            </div>
+          </div>
+
+          <div v-if="drilldown" class="flex items-center gap-2">
+            <span class="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-medium text-slate-600">
+              {{ drilldown.selection.resource }}
+            </span>
+            <button class="sa-btn-ghost" @click="resetDrilldown">
+              Clear Drill-down
+            </button>
+          </div>
+        </div>
+
+        <div v-if="drilldownError" class="mt-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+          {{ drilldownError }}
+        </div>
+
+        <div
+          v-else-if="loadingDrilldown && !drilldown"
+          class="mt-4 rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-10 text-center text-sm text-slate-500"
+        >
+          Loading matching rows...
+        </div>
+
+        <div
+          v-else-if="!drilldown"
+          class="mt-4 rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-10 text-center text-sm text-slate-500"
+        >
+          Click any chart element to see the exact records behind it.
+        </div>
+
+        <template v-else>
+          <div class="mt-4 flex flex-wrap items-center gap-2">
+            <span class="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+              {{ drilldown.selection.label }}
+            </span>
+            <span class="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600">
+              {{ drilldown.table.pagination.total }} matching rows
+            </span>
+            <span
+              v-if="drilldown.selection.group_by"
+              class="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600"
+            >
+              {{ drilldown.selection.group_by }}
+            </span>
+          </div>
+
+          <div class="mt-4 overflow-auto rounded-2xl border border-slate-200">
+            <table class="min-w-full">
+              <thead>
+                <tr>
+                  <th v-for="column in drilldown.table.columns" :key="column" class="sa-th whitespace-nowrap">
+                    {{ column }}
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="(row, index) in drilldown.table.rows" :key="index">
+                  <td v-for="column in drilldown.table.columns" :key="column" class="sa-td align-top">
+                    <span class="break-words">{{ formatCell(row[column]) }}</span>
+                  </td>
+                </tr>
+                <tr v-if="drilldown.table.rows.length === 0">
+                  <td class="sa-td text-slate-500" :colspan="drilldown.table.columns.length || 1">
+                    No matching rows were returned for the selected chart segment.
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div class="text-xs text-slate-500">
+              Showing {{ drilldown.table.pagination.from ?? 0 }} to {{ drilldown.table.pagination.to ?? 0 }} of {{ drilldown.table.pagination.total }} matching rows
+            </div>
+
+            <div class="flex items-center gap-2">
+              <button
+                class="sa-btn-ghost"
+                :disabled="loadingDrilldown || drilldown.table.pagination.page <= 1"
+                @click="goToDrilldownPage(drilldown.table.pagination.page - 1)"
+              >
+                Previous
+              </button>
+              <span class="rounded-xl border border-slate-200 px-3 py-2 text-xs text-slate-600">
+                Page {{ drilldown.table.pagination.page }} of {{ drilldown.table.pagination.last_page }}
+              </span>
+              <button
+                class="sa-btn-ghost"
+                :disabled="loadingDrilldown || drilldown.table.pagination.page >= drilldown.table.pagination.last_page"
+                @click="goToDrilldownPage(drilldown.table.pagination.page + 1)"
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        </template>
       </div>
 
       <div class="sa-card p-5">
@@ -366,6 +483,31 @@ type ReportResponse = {
   }
 }
 
+type DrilldownResponse = {
+  title: string
+  description: string
+  selection: {
+    label: string
+    mode: string
+    resource: string
+    resource_type: "table" | "collection"
+    group_by?: string | null
+    period?: string | null
+  }
+  table: {
+    columns: string[]
+    rows: Record<string, any>[]
+    pagination: {
+      page: number
+      per_page: number
+      total: number
+      last_page: number
+      from: number | null
+      to: number | null
+    }
+  }
+}
+
 const api = useApi()
 
 const databases = ref<DatabaseItem[]>([])
@@ -377,9 +519,19 @@ const loadingReport = ref(false)
 const loadingSchema = ref(false)
 const exportingPdf = ref(false)
 const requestToken = ref(0)
+const drilldownRequestToken = ref(0)
 const resourceColumns = ref<SchemaColumn[]>([])
 const isFilterDirty = ref(false)
 const resourceType = ref<"table" | "collection">("table")
+const drilldown = ref<DrilldownResponse | null>(null)
+const drilldownError = ref("")
+const loadingDrilldown = ref(false)
+const activeDrilldown = reactive({
+  label: "",
+  mode: "",
+  groupBy: "" as string | null,
+  page: 1,
+})
 
 const filters = reactive({
   dbId: "",
@@ -425,6 +577,10 @@ const resourceLabelPlural = computed(() => activeResourceType.value === "collect
 const warnings = computed(() => report.value?.warnings || [])
 const sortableColumns = computed(() => report.value?.table.columns || [])
 const chartHasData = computed(() => (report.value?.chart.labels.length || 0) > 0)
+const chartCanDrillDown = computed(() => {
+  const mode = report.value?.chart.meta?.mode || ""
+  return filters.graphType !== "table" && chartHasData.value && ["date", "group", "resource_overview"].includes(mode)
+})
 const selectedVisualizationColumn = computed(
   () => resourceColumns.value.find((column) => column.name === filters.visualizationColumn) || null,
 )
@@ -525,6 +681,7 @@ watch(() => filters.dbId, async (nextDbId) => {
   filters.visualizationColumn = ""
   report.value = null
   error.value = ""
+  resetDrilldown()
   resources.value = []
   resourceColumns.value = []
   isFilterDirty.value = !!nextDbId
@@ -544,11 +701,13 @@ watch(() => filters.resource, async (nextResource) => {
 
   if (!nextResource) {
     resourceColumns.value = []
+    resetDrilldown()
     isFilterDirty.value = true
     return
   }
 
   await loadResourceSchema(nextResource)
+  resetDrilldown()
   isFilterDirty.value = true
 })
 
@@ -556,6 +715,7 @@ watch(
   () => [filters.from, filters.to, filters.period, filters.graphType, filters.visualizationColumn, filters.perPage, filters.sortBy, filters.sortDirection],
   () => {
     if (!hasDatabase.value) return
+    resetDrilldown()
     isFilterDirty.value = true
   },
 )
@@ -628,6 +788,7 @@ async function fetchReport() {
     if (currentToken !== requestToken.value) return
 
     report.value = response
+    resetDrilldown()
     isFilterDirty.value = false
     resources.value = response.resources || resources.value
 
@@ -732,6 +893,7 @@ function clearFilters() {
 
   report.value = null
   resourceColumns.value = []
+  resetDrilldown()
   error.value = ""
   isFilterDirty.value = hasDatabase.value
 }
@@ -810,6 +972,90 @@ async function goToPage(page: number) {
 
   filters.page = page
   await fetchReport()
+}
+
+function resetDrilldown() {
+  drilldown.value = null
+  drilldownError.value = ""
+  loadingDrilldown.value = false
+  activeDrilldown.label = ""
+  activeDrilldown.mode = ""
+  activeDrilldown.groupBy = null
+  activeDrilldown.page = 1
+}
+
+async function handleChartClick(params: any) {
+  if (!chartCanDrillDown.value || !report.value || !filters.dbId) return
+
+  const label = resolveChartLabel(params)
+  const mode = report.value.chart.meta?.mode || ""
+
+  if (!label || !mode) return
+
+  activeDrilldown.label = label
+  activeDrilldown.mode = mode
+  activeDrilldown.groupBy = report.value.chart.meta?.group_by || null
+  activeDrilldown.page = 1
+
+  await fetchDrilldown()
+}
+
+async function fetchDrilldown() {
+  if (!report.value || !filters.dbId || !activeDrilldown.label || !activeDrilldown.mode) return
+
+  const currentToken = ++drilldownRequestToken.value
+  loadingDrilldown.value = true
+  drilldownError.value = ""
+
+  try {
+    const response = await api.post<DrilldownResponse>("/api/analytics/drilldown", {
+      db_id: Number(filters.dbId),
+      resource: report.value.selected_resource || filters.resource || null,
+      from: filters.from || null,
+      to: filters.to || null,
+      period: filters.period,
+      graph_type: filters.graphType,
+      group_column: filters.visualizationColumn || null,
+      date_column: selectedVisualizationIsDate.value
+        ? filters.visualizationColumn || report.value.schema?.detected?.date_column || null
+        : report.value.schema?.detected?.date_column || null,
+      chart_mode: activeDrilldown.mode,
+      chart_group_by: activeDrilldown.groupBy || null,
+      bucket_label: activeDrilldown.label,
+      page: activeDrilldown.page,
+      per_page: filters.perPage,
+      sort_by: filters.sortBy || null,
+      sort_direction: filters.sortDirection,
+    })
+
+    if (currentToken !== drilldownRequestToken.value) return
+
+    drilldown.value = response
+  } catch (err) {
+    if (currentToken !== drilldownRequestToken.value) return
+    drilldown.value = null
+    drilldownError.value = getApiErrorMessage(err, "Unable to load matching rows for the selected chart value.")
+  } finally {
+    if (currentToken === drilldownRequestToken.value) {
+      loadingDrilldown.value = false
+    }
+  }
+}
+
+async function goToDrilldownPage(page: number) {
+  if (!drilldown.value || page < 1 || page === activeDrilldown.page) return
+
+  activeDrilldown.page = page
+  await fetchDrilldown()
+}
+
+function resolveChartLabel(params: any) {
+  if (!params) return ""
+  if (typeof params.name === "string" && params.name) return params.name
+  if (typeof params.axisValue === "string" && params.axisValue) return params.axisValue
+  if (typeof params.data?.name === "string" && params.data.name) return params.data.name
+  if (typeof params.data?.value === "string" && params.data.value) return params.data.value
+  return ""
 }
 
 function isDateColumn(column: SchemaColumn) {

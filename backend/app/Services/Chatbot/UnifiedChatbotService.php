@@ -27,7 +27,12 @@ class UnifiedChatbotService
     ) {
     }
 
-    public function prepareContext(User $user, ?int $databaseId = null, ?string $resource = null): array
+    public function prepareContext(
+        User $user,
+        ?int $databaseId = null,
+        ?string $resource = null,
+        string|int|null $conversationId = null,
+    ): array
     {
         $scopeKey = $this->scopeKey($databaseId, $resource);
         $context = $this->buildContext($user, $databaseId, $resource);
@@ -35,10 +40,14 @@ class UnifiedChatbotService
             'database_id' => $databaseId,
             'resource' => $resource,
         ]);
+        $conversation = $conversationId !== null
+            ? $this->historyStore->getConversation($user, $conversationId)
+            : null;
 
         return [
             'context_id' => $stored['id'],
-            'history' => $this->historyStore->getHistory($user, $scopeKey),
+            'history' => $conversation['messages'] ?? [],
+            'conversation' => $conversation['conversation'] ?? null,
             ...$context,
         ];
     }
@@ -50,9 +59,21 @@ class UnifiedChatbotService
             ? trim((string) $payload['resource'])
             : null;
         $scopeKey = $this->scopeKey($databaseId, $resource);
+        $conversationId = isset($payload['conversation_id']) && $payload['conversation_id'] !== ''
+            ? (string) $payload['conversation_id']
+            : null;
+        $startNewConversation = (bool) ($payload['new_conversation'] ?? false);
+        $conversation = $this->historyStore->resolveConversation(
+            $user,
+            $scopeKey,
+            $resource,
+            $conversationId,
+            $startNewConversation,
+            ['database_id' => $databaseId, 'resource' => $resource]
+        );
         $contextPayload = $this->loadOrPrepareContext($user, $databaseId, $resource, $payload['context_id'] ?? null);
         $context = $contextPayload['context'];
-        $history = $this->historyStore->getHistory($user, $scopeKey);
+        $history = $this->historyStore->getHistory($user, $scopeKey, null, $conversation->id);
         $prompt = trim((string) $payload['prompt']);
         $query = $this->queryInterpreter->interpret(
             $prompt,
@@ -100,11 +121,21 @@ class UnifiedChatbotService
             ],
         ];
 
-        $history = $this->historyStore->appendTurn($user, $scopeKey, $userMessage, $assistantMessage);
+        $storedConversation = $this->historyStore->appendTurn(
+            $user,
+            $scopeKey,
+            $userMessage,
+            $assistantMessage,
+            null,
+            $conversation->id,
+            false,
+            ['database_id' => $databaseId, 'resource' => $resource]
+        );
 
         return [
             'context_id' => $contextPayload['id'],
             'scope' => $scopeKey,
+            'conversation' => $storedConversation['conversation'],
             'summary' => $context['summary'] ?? null,
             'overview' => $context['overview'] ?? [],
             'databases' => $context['databases'] ?? [],
@@ -123,22 +154,49 @@ class UnifiedChatbotService
             'sources' => $analysis['sources'],
             'language_style' => $effectiveQuery['language_style'],
             'interpretation_confidence' => $effectiveQuery['interpretation_confidence'] ?? null,
-            'history' => $history,
+            'history' => $storedConversation['history'],
         ];
     }
 
-    public function history(User $user, ?int $databaseId = null, ?string $resource = null): array
+    public function history(
+        User $user,
+        ?int $databaseId = null,
+        ?string $resource = null,
+        string|int|null $conversationId = null,
+    ): array
     {
+        if ($conversationId !== null) {
+            $conversation = $this->historyStore->getConversation($user, $conversationId);
+
+            return [
+                'conversation' => $conversation['conversation'] ?? null,
+                'messages' => $conversation['messages'] ?? [],
+            ];
+        }
+
         return [
             'messages' => $this->historyStore->getHistory($user, $this->scopeKey($databaseId, $resource)),
         ];
     }
 
-    public function reset(User $user, ?int $databaseId = null, ?string $resource = null): array
+    public function reset(
+        User $user,
+        ?int $databaseId = null,
+        ?string $resource = null,
+        string|int|null $conversationId = null,
+    ): array
     {
-        $this->historyStore->reset($user, $this->scopeKey($databaseId, $resource));
+        $conversation = $this->historyStore->reset(
+            $user,
+            $this->scopeKey($databaseId, $resource),
+            $resource,
+            $conversationId
+        );
 
-        return ['ok' => true];
+        return [
+            'ok' => true,
+            'conversation' => $conversation,
+        ];
     }
 
     public function knowledgeStatus(User $user): array
@@ -151,6 +209,23 @@ class UnifiedChatbotService
         $dbIds = array_values(array_map('intval', (array) ($payload['db_ids'] ?? [])));
 
         return $this->knowledgeIndex->syncForUser($user, $dbIds === [] ? null : $dbIds, (bool) ($payload['force'] ?? true));
+    }
+
+    public function conversations(User $user, ?string $search = null): array
+    {
+        return [
+            'conversations' => $this->historyStore->listConversations($user, $search),
+        ];
+    }
+
+    public function conversation(User $user, string|int $conversationId): array
+    {
+        $conversation = $this->historyStore->getConversation($user, $conversationId);
+
+        return [
+            'conversation' => $conversation['conversation'] ?? null,
+            'messages' => $conversation['messages'] ?? [],
+        ];
     }
 
     private function loadOrPrepareContext(User $user, ?int $databaseId, ?string $resource, ?string $contextId): array

@@ -7,6 +7,7 @@ use App\Models\User;
 use App\Services\Database\Contracts\DatabaseConnector;
 use App\Services\Database\DatabaseConnectorManager;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
 use Laravel\Sanctum\Sanctum;
 use Mockery;
 use Tests\TestCase;
@@ -81,6 +82,64 @@ class DashboardAnalyticsTest extends TestCase
             ->assertOk()
             ->assertJsonPath('chart.meta.mode', 'group')
             ->assertJsonPath('chart.meta.group_by', 'classification');
+    }
+
+    public function test_chart_group_drilldown_returns_only_matching_rows(): void
+    {
+        Sanctum::actingAs($this->makeApprovedEndUser());
+        $database = $this->makeDatabaseConnection();
+
+        $manager = Mockery::mock(DatabaseConnectorManager::class);
+        $manager->shouldReceive('for')->once()->andReturn($this->makeConnector());
+        $this->app->instance(DatabaseConnectorManager::class, $manager);
+
+        $this->postJson('/api/analytics/drilldown', [
+            'db_id' => $database->id,
+            'resource' => 'incidents',
+            'chart_mode' => 'group',
+            'chart_group_by' => 'status',
+            'bucket_label' => 'Open',
+            'page' => 1,
+            'per_page' => 10,
+        ])
+            ->assertOk()
+            ->assertJsonPath('selection.mode', 'group')
+            ->assertJsonPath('selection.group_by', 'status')
+            ->assertJsonPath('table.pagination.total', 2)
+            ->assertJsonCount(2, 'table.rows')
+            ->assertJsonPath('table.rows.0.status', 'Open')
+            ->assertJsonPath('table.rows.1.status', 'Open');
+    }
+
+    public function test_chart_date_drilldown_respects_global_filters_and_selected_bucket(): void
+    {
+        Sanctum::actingAs($this->makeApprovedEndUser());
+        $database = $this->makeDatabaseConnection();
+
+        $manager = Mockery::mock(DatabaseConnectorManager::class);
+        $manager->shouldReceive('for')->once()->andReturn($this->makeConnector());
+        $this->app->instance(DatabaseConnectorManager::class, $manager);
+
+        $this->postJson('/api/analytics/drilldown', [
+            'db_id' => $database->id,
+            'resource' => 'incidents',
+            'from' => '2026-01-15',
+            'to' => '2026-01-31',
+            'period' => 'monthly',
+            'date_column' => 'created_at',
+            'chart_mode' => 'date',
+            'chart_group_by' => 'created_at',
+            'bucket_label' => '2026-01-01',
+            'page' => 1,
+            'per_page' => 10,
+        ])
+            ->assertOk()
+            ->assertJsonPath('selection.mode', 'date')
+            ->assertJsonPath('selection.period', 'monthly')
+            ->assertJsonPath('table.pagination.total', 3)
+            ->assertJsonCount(3, 'table.rows')
+            ->assertJsonPath('table.rows.0.id', 3)
+            ->assertJsonPath('table.rows.2.id', 5);
     }
 
     public function test_dashboard_report_rejects_an_invalid_date_range(): void
@@ -291,7 +350,7 @@ class DashboardAnalyticsTest extends TestCase
             public function paginateRows(string $resource, array $filters = [], int $page = 1, int $perPage = 25): array
             {
                 $rows = $resource === 'incidents'
-                    ? $this->incidentRows()
+                    ? $this->filterRows($this->incidentRows(), $filters)
                     : [['id' => 1, 'role' => 'Patrol']];
 
                 return [
@@ -313,7 +372,7 @@ class DashboardAnalyticsTest extends TestCase
                     return 1;
                 }
 
-                return $filters === [] ? 5 : 3;
+                return count($this->filterRows($this->incidentRows(), $filters));
             }
 
             public function aggregateByGroup(
@@ -324,10 +383,22 @@ class DashboardAnalyticsTest extends TestCase
                 array $filters = [],
                 int $limit = 10,
             ): array {
-                return [
-                    ['label' => 'Open', 'value' => 2],
-                    ['label' => 'Closed', 'value' => 1],
-                ];
+                $rows = $this->filterRows($this->incidentRows(), $filters);
+                $buckets = [];
+
+                foreach ($rows as $row) {
+                    $label = $row[$groupColumn] ?? 'Unknown';
+                    $label = $label === null || $label === '' ? 'Unknown' : (string) $label;
+                    $buckets[$label] = ($buckets[$label] ?? 0) + 1;
+                }
+
+                arsort($buckets);
+
+                return collect($buckets)
+                    ->map(fn(int $value, string $label) => ['label' => $label, 'value' => $value])
+                    ->values()
+                    ->take($limit)
+                    ->all();
             }
 
             public function aggregateByDate(
@@ -339,10 +410,21 @@ class DashboardAnalyticsTest extends TestCase
                 string $period = 'daily',
                 int $limit = 100,
             ): array {
-                return [
-                    ['label' => '2026-01-01', 'value' => 1],
-                    ['label' => '2026-01-15', 'value' => 2],
-                ];
+                $rows = $this->filterRows($this->incidentRows(), array_merge($filters, ['date_column' => $dateColumn]));
+                $buckets = [];
+
+                foreach ($rows as $row) {
+                    $label = $this->dateBucketLabel((string) ($row[$dateColumn] ?? ''), $period);
+                    $buckets[$label] = ($buckets[$label] ?? 0) + 1;
+                }
+
+                ksort($buckets);
+
+                return collect($buckets)
+                    ->map(fn(int $value, string $label) => ['label' => $label, 'value' => $value])
+                    ->values()
+                    ->take($limit)
+                    ->all();
             }
 
             public function getAggregateData(
@@ -360,12 +442,58 @@ class DashboardAnalyticsTest extends TestCase
             private function incidentRows(): array
             {
                 return [
-                    ['id' => 1, 'status' => 'Open', 'created_at' => '2026-01-01T10:00:00Z'],
-                    ['id' => 2, 'status' => 'Closed', 'created_at' => '2026-01-10T10:00:00Z'],
-                    ['id' => 3, 'status' => 'Open', 'created_at' => '2026-01-15T10:00:00Z'],
-                    ['id' => 4, 'status' => 'Escalated', 'created_at' => '2026-01-20T10:00:00Z'],
-                    ['id' => 5, 'status' => 'Closed', 'created_at' => '2026-01-25T10:00:00Z'],
+                    ['id' => 1, 'classification' => 'Security', 'status' => 'Open', 'created_at' => '2026-01-01T10:00:00Z'],
+                    ['id' => 2, 'classification' => 'Maintenance', 'status' => 'Closed', 'created_at' => '2026-01-10T10:00:00Z'],
+                    ['id' => 3, 'classification' => 'Security', 'status' => 'Open', 'created_at' => '2026-01-15T10:00:00Z'],
+                    ['id' => 4, 'classification' => 'Emergency', 'status' => 'Escalated', 'created_at' => '2026-01-20T10:00:00Z'],
+                    ['id' => 5, 'classification' => 'Maintenance', 'status' => 'Closed', 'created_at' => '2026-01-25T10:00:00Z'],
                 ];
+            }
+
+            private function filterRows(array $rows, array $filters): array
+            {
+                return array_values(array_filter($rows, function (array $row) use ($filters) {
+                    $dateColumn = $filters['date_column'] ?? null;
+
+                    if (is_string($dateColumn) && isset($row[$dateColumn])) {
+                        $timestamp = strtotime((string) $row[$dateColumn]);
+
+                        if (!empty($filters['from']) && $timestamp < strtotime((string) $filters['from'])) {
+                            return false;
+                        }
+
+                        if (!empty($filters['to']) && $timestamp > strtotime((string) $filters['to'] . ' 23:59:59')) {
+                            return false;
+                        }
+                    }
+
+                    foreach ((array) ($filters['equals'] ?? []) as $clause) {
+                        $column = $clause['column'] ?? null;
+
+                        if (!is_string($column) || !array_key_exists('value', $clause)) {
+                            continue;
+                        }
+
+                        if (($row[$column] ?? null) !== $clause['value']) {
+                            return false;
+                        }
+                    }
+
+                    return true;
+                }));
+            }
+
+            private function dateBucketLabel(string $value, string $period): string
+            {
+                $date = Carbon::parse($value);
+
+                return match ($period) {
+                    'monthly' => $date->copy()->startOfMonth()->toDateString(),
+                    'weekly' => sprintf('%d-W%02d', $date->isoWeekYear, $date->isoWeek),
+                    'annual' => $date->copy()->startOfYear()->toDateString(),
+                    'semiannual' => $date->format('Y') . '-H' . ($date->month <= 6 ? '1' : '2'),
+                    default => $date->toDateString(),
+                };
             }
         };
     }

@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\User;
+use App\Services\AuditTrailService;
 use App\Support\UpEmail;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -71,6 +72,22 @@ class UserController extends Controller
             'role' => $data['role'] ?? User::ROLE_END_USER,
             'approval_status' => $data['approval_status'] ?? User::APPROVAL_PENDING,
         ]);
+
+        app(AuditTrailService::class)->record(
+            $request,
+            'User Management',
+            'Add User',
+            'Created a new SMART-ACSESS user account.',
+            [
+                'target_user_id' => $u->id,
+                'target_user_name' => trim($u->first_name . ' ' . $u->last_name),
+                'target_user_email' => $u->email,
+                'role' => $u->role,
+                'approval_status' => $u->approval_status,
+            ],
+            User::class,
+            $u->id,
+        );
 
         return response()->json($u, 201);
     }

@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Api\Concerns\ValidatesDashboardFilters;
 use App\Http\Controllers\Controller;
 use App\Models\ConnectedDatabase;
+use App\Services\AuditTrailService;
 use App\Services\Database\DatabaseConnectorException;
 use App\Services\Database\DatabaseConnectorManager;
 use App\Services\DatabaseReportingService;
@@ -81,8 +82,40 @@ class ReportsController extends Controller
                 'table' => $report['table'] ?? ['columns' => [], 'rows' => [], 'pagination' => []],
             ];
 
+            [$paperSize, $paperOrientation] = $this->resolvePaperLayout($pdfPayload);
+
             $pdf = Pdf::loadHTML($this->buildDashboardPdfHtml($pdfPayload))
-                ->setPaper('a4', $this->resolvePaperOrientation($pdfPayload));
+                ->setPaper($paperSize, $paperOrientation);
+
+            app(AuditTrailService::class)->record(
+                $request,
+                'Dashboard',
+                'Export Dashboard Report',
+                'Downloaded the current dashboard report as PDF.',
+                [
+                    'database_id' => $database->id,
+                    'database_name' => $database->name,
+                    'resource_type' => $report['resource_type'] ?? 'table',
+                    'resource' => $data['resource'],
+                    'selected_table' => $data['table'] ?? (($report['resource_type'] ?? 'table') === 'table' ? $data['resource'] : null),
+                    'selected_collection' => $data['collection'] ?? (($report['resource_type'] ?? 'table') === 'collection' ? $data['resource'] : null),
+                    'from' => $data['from'] ?? null,
+                    'to' => $data['to'] ?? null,
+                    'period' => $data['period'] ?? 'none',
+                    'graph_type' => $data['graph_type'] ?? 'table',
+                    'date_column' => $data['date_column'] ?? null,
+                    'group_column' => $data['group_column'] ?? null,
+                    'sort_by' => $data['sort_by'] ?? null,
+                    'sort_direction' => $data['sort_direction'] ?? null,
+                    'paper_size' => $paperSize,
+                    'paper_orientation' => $paperOrientation,
+                    'row_count' => count((array) ($report['table']['rows'] ?? [])),
+                    'column_count' => count((array) ($report['table']['columns'] ?? [])),
+                    'file_name' => $fileName,
+                ],
+                ConnectedDatabase::class,
+                $database->id,
+            );
 
             return $pdf->download($fileName);
         } catch (DatabaseConnectorException $exception) {
@@ -124,6 +157,10 @@ class ReportsController extends Controller
         $table = $payload['table'] ?? ['columns' => [], 'rows' => [], 'pagination' => []];
         $chart = $payload['chart'] ?? ['labels' => [], 'series' => []];
         $pagination = $table['pagination'] ?? [];
+        $tableColumns = $table['columns'] ?? [];
+        $tableDensityClass = $this->resolveTableDensityClass($tableColumns);
+        $tableSectionClass = $this->resolveTableSectionClass($table['rows'] ?? []);
+        $pageClass = $this->resolvePageDensityClass($tableColumns);
 
         $warningHtml = '';
         foreach (($payload['warnings'] ?? []) as $warning) {
@@ -153,19 +190,15 @@ class ReportsController extends Controller
         foreach (($table['rows'] ?? []) as $row) {
             $tableBodyHtml .= '<tr>';
             foreach (($table['columns'] ?? []) as $column) {
-                $value = $row[$column] ?? null;
-                if (is_array($value) || is_object($value)) {
-                    $value = json_encode($value);
-                }
-
-                $tableBodyHtml .= '<td>' . $this->escape((string) ($value === null || $value === '' ? '-' : $value)) . '</td>';
+                $value = $this->formatPdfCellValue((string) $column, $row[$column] ?? null);
+                $tableBodyHtml .= '<td>' . $this->escape($value) . '</td>';
             }
             $tableBodyHtml .= '</tr>';
         }
 
         $tableSectionHtml = $tableBodyHtml !== '' && $tableHeadHtml !== ''
             ? '
-                <table class="data-table">
+                <table class="data-table ' . $tableDensityClass . '">
                     <thead><tr>' . $tableHeadHtml . '</tr></thead>
                     <tbody>' . $tableBodyHtml . '</tbody>
                 </table>
@@ -180,8 +213,10 @@ class ReportsController extends Controller
   <meta charset="utf-8">
   <title>' . $this->escape((string) ($payload['title'] ?? 'Report')) . '</title>
   <style>
+    @page { margin: 36pt; }
     body { font-family: DejaVu Sans, sans-serif; font-size: 11px; color: #17212b; margin: 0; }
-    .page { padding: 26px 28px; }
+    .page { padding: 0; }
+    .page.page-tight { font-size: 10px; }
     .header { border-bottom: 2px solid #0f5b3b; padding-bottom: 12px; margin-bottom: 18px; }
     .brand { display: inline-block; padding: 5px 10px; background: #0f5b3b; color: #fff; border-radius: 12px; font-size: 10px; letter-spacing: .08em; }
     .title { font-size: 22px; font-weight: bold; margin: 10px 0 4px 0; }
@@ -189,6 +224,7 @@ class ReportsController extends Controller
     .meta-table, .data-table { width: 100%; border-collapse: collapse; }
     .meta-table td { padding: 4px 8px 4px 0; vertical-align: top; }
     .section { margin-top: 18px; }
+    .section.section-table { page-break-before: always; }
     .section-title { font-size: 14px; font-weight: bold; margin-bottom: 10px; color: #0f5b3b; }
     .kpi-grid { width: 100%; border-collapse: separate; border-spacing: 10px 0; margin: 0 -10px; }
     .kpi-card { border: 1px solid #d7e0e8; border-radius: 12px; padding: 12px; background: #f9fbfc; }
@@ -198,14 +234,21 @@ class ReportsController extends Controller
     .warning { border: 1px solid #eed6a6; background: #fff7e5; color: #7a5c12; padding: 10px 12px; border-radius: 10px; margin-bottom: 8px; }
     .chart-box { border: 1px solid #d7e0e8; border-radius: 12px; padding: 12px; background: #fff; }
     .chart-svg-wrap { text-align: center; }
-    .data-table th { background: #0f5b3b; color: #fff; padding: 7px 8px; text-align: left; font-size: 10px; }
-    .data-table td { border: 1px solid #d9e1e8; padding: 6px 8px; font-size: 9px; vertical-align: top; word-break: break-word; }
+    .data-table { table-layout: fixed; }
+    .data-table thead { display: table-header-group; }
+    .data-table tr { page-break-inside: avoid; }
+    .data-table th { background: #0f5b3b; color: #fff; padding: 8px 7px; text-align: left; font-size: 10.5px; line-height: 1.25; white-space: normal; overflow-wrap: anywhere; word-break: break-word; }
+    .data-table td { border: 1px solid #d9e1e8; padding: 7px 7px; font-size: 9.5px; line-height: 1.4; vertical-align: top; white-space: normal; overflow-wrap: anywhere; word-break: break-word; }
+    .data-table.table-compact th { padding: 7px 6px; font-size: 9.5px; }
+    .data-table.table-compact td { padding: 6px 6px; font-size: 8.5px; }
+    .data-table.table-tight th { padding: 6px 5px; font-size: 8.5px; }
+    .data-table.table-tight td { padding: 6px 5px; font-size: 7.75px; }
     .small { font-size: 10px; }
     .footer-note { margin-top: 10px; font-size: 10px; color: #5a6570; }
   </style>
 </head>
 <body>
-  <div class="page">
+  <div class="page ' . $pageClass . '">
     <div class="header">
       <div class="brand">SMART-ACSESS</div>
       <div class="title">' . $this->escape((string) ($payload['title'] ?? 'Report')) . '</div>
@@ -247,7 +290,7 @@ class ReportsController extends Controller
         <div class="section-title">Visual Representation</div>
         <div class="chart-box">' . $chartHtml . '</div>
       </div>
-      <div class="section">
+      <div class="section ' . $tableSectionClass . '">
         <div class="section-title">Tabular Report</div>
         ' . $tableSectionHtml . '
       </div>
@@ -261,30 +304,31 @@ class ReportsController extends Controller
         return htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
     }
 
-    private function resolvePaperOrientation(array $payload): string
+    private function resolvePaperLayout(array $payload): array
     {
         $columns = $payload['table']['columns'] ?? [];
-        $labels = $payload['chart']['labels'] ?? [];
-        $graphType = strtolower((string) ($payload['chart']['type'] ?? 'table'));
-        $maxLabelLength = 0;
+        $orientation = count($columns) >= 7 ? 'landscape' : 'portrait';
 
-        foreach ($labels as $label) {
-            $maxLabelLength = max($maxLabelLength, mb_strlen((string) $label));
-        }
+        return ['legal', $orientation];
+    }
 
-        if (count($columns) >= 7) {
-            return 'landscape';
-        }
+    private function resolveTableDensityClass(array $columns): string
+    {
+        return match (true) {
+            count($columns) >= 16 => 'table-tight',
+            count($columns) >= 13 => 'table-compact',
+            default => '',
+        };
+    }
 
-        if (count($columns) >= 5 && $graphType !== 'table') {
-            return 'landscape';
-        }
+    private function resolveTableSectionClass(array $rows): string
+    {
+        return $rows !== [] ? 'section-table' : '';
+    }
 
-        if (in_array($graphType, ['bar', 'line'], true) && (count($labels) >= 8 || $maxLabelLength >= 18)) {
-            return 'landscape';
-        }
-
-        return 'portrait';
+    private function resolvePageDensityClass(array $columns): string
+    {
+        return count($columns) >= 16 ? 'page-tight' : '';
     }
 
     private function renderChartMarkup(array $chart): string
@@ -313,7 +357,7 @@ class ReportsController extends Controller
         $height = 320;
         $paddingLeft = 58;
         $paddingRight = 24;
-        $paddingTop = 24;
+        $paddingTop = 42;
         $paddingBottom = 78;
         $plotWidth = $width - $paddingLeft - $paddingRight;
         $plotHeight = $height - $paddingTop - $paddingBottom;
@@ -337,10 +381,10 @@ class ReportsController extends Controller
 
             $svg[] = '<rect x="' . round($x, 2) . '" y="' . round($y, 2) . '" width="' . round($barWidth, 2) . '" height="' . round($barHeight, 2) . '" rx="6" ry="6" fill="#0f5b3b"/>';
             $svg[] = '<text x="' . round($labelX, 2) . '" y="' . ($paddingTop + $plotHeight + 16) . '" font-size="10" text-anchor="middle" fill="#5a6570">' . $this->escape($this->truncateLabel((string) $label, 14)) . '</text>';
-            $svg[] = '<text x="' . round($labelX, 2) . '" y="' . max($y - 6, 12) . '" font-size="10" text-anchor="middle" fill="#17212b">' . $this->escape($this->formatNumericValue($value)) . '</text>';
+            $svg[] = '<text x="' . round($labelX, 2) . '" y="' . max($y - 8, 28) . '" font-size="10" text-anchor="middle" fill="#17212b">' . $this->escape($this->formatNumericValue($value)) . '</text>';
         }
 
-        $svg[] = '<text x="' . $paddingLeft . '" y="14" font-size="12" fill="#17212b">Bar Chart</text>';
+        $svg[] = '<text x="' . $paddingLeft . '" y="20" font-size="12" font-weight="bold" fill="#17212b">Bar Chart</text>';
         $svg[] = '</svg>';
 
         return implode('', $svg);
@@ -352,7 +396,7 @@ class ReportsController extends Controller
         $height = 320;
         $paddingLeft = 58;
         $paddingRight = 24;
-        $paddingTop = 24;
+        $paddingTop = 42;
         $paddingBottom = 78;
         $plotWidth = $width - $paddingLeft - $paddingRight;
         $plotHeight = $height - $paddingTop - $paddingBottom;
@@ -396,10 +440,10 @@ class ReportsController extends Controller
 
             $svg[] = '<circle cx="' . round($x, 2) . '" cy="' . round($y, 2) . '" r="4" fill="#0f5b3b"/>';
             $svg[] = '<text x="' . round($x, 2) . '" y="' . ($paddingTop + $plotHeight + 16) . '" font-size="10" text-anchor="middle" fill="#5a6570">' . $this->escape($this->truncateLabel((string) $label, 14)) . '</text>';
-            $svg[] = '<text x="' . round($x, 2) . '" y="' . max($y - 8, 12) . '" font-size="10" text-anchor="middle" fill="#17212b">' . $this->escape($this->formatNumericValue($value)) . '</text>';
+            $svg[] = '<text x="' . round($x, 2) . '" y="' . max($y - 10, 28) . '" font-size="10" text-anchor="middle" fill="#17212b">' . $this->escape($this->formatNumericValue($value)) . '</text>';
         }
 
-        $svg[] = '<text x="' . $paddingLeft . '" y="14" font-size="12" fill="#17212b">Line Chart</text>';
+        $svg[] = '<text x="' . $paddingLeft . '" y="20" font-size="12" font-weight="bold" fill="#17212b">Line Chart</text>';
         $svg[] = '</svg>';
 
         return implode('', $svg);
@@ -408,9 +452,14 @@ class ReportsController extends Controller
     private function renderPieChartSvg(array $labels, array $series): string
     {
         $width = 700;
-        $height = 320;
+        $legendStartY = 54;
+        $legendRowHeight = 24;
+        $legendBottomPadding = 42;
+        $chartMinHeight = 320;
+        $legendHeight = $legendStartY + (count($labels) * $legendRowHeight) + $legendBottomPadding;
+        $height = max($chartMinHeight, $legendHeight);
         $centerX = 180;
-        $centerY = 160;
+        $centerY = max(160, min($height / 2, 220));
         $radius = 92;
         $total = array_sum(array_map(fn($value) => (float) $value, $series)) ?: 1.0;
         $palette = ['#0f5b3b', '#efb21a', '#2b7fff', '#d9485f', '#4a9f74', '#7a4ef7', '#4b5563', '#14b8a6'];
@@ -425,29 +474,36 @@ class ReportsController extends Controller
             $value = (float) ($series[$index] ?? 0);
             $sliceAngle = ($value / $total) * 360;
             $endAngle = $startAngle + $sliceAngle;
-            $largeArc = $sliceAngle > 180 ? 1 : 0;
+            $sliceColor = $palette[$index % count($palette)];
 
-            $start = $this->polarToCartesian($centerX, $centerY, $radius, $startAngle);
-            $end = $this->polarToCartesian($centerX, $centerY, $radius, $endAngle);
-            $path = sprintf(
-                'M %s %s L %s %s A %s %s 0 %d 1 %s %s Z',
-                round($centerX, 2),
-                round($centerY, 2),
-                round($start['x'], 2),
-                round($start['y'], 2),
-                $radius,
-                $radius,
-                $largeArc,
-                round($end['x'], 2),
-                round($end['y'], 2),
-            );
+            // Full-circle SVG arcs collapse when the start and end points are identical,
+            // so 100% slices need to be rendered as a circle instead of an arc path.
+            if ($sliceAngle >= 359.999) {
+                $svg[] = '<circle cx="' . $centerX . '" cy="' . $centerY . '" r="' . $radius . '" fill="' . $sliceColor . '" stroke="#ffffff" stroke-width="2"/>';
+            } else {
+                $largeArc = $sliceAngle > 180 ? 1 : 0;
+                $start = $this->polarToCartesian($centerX, $centerY, $radius, $startAngle);
+                $end = $this->polarToCartesian($centerX, $centerY, $radius, $endAngle);
+                $path = sprintf(
+                    'M %s %s L %s %s A %s %s 0 %d 1 %s %s Z',
+                    round($centerX, 2),
+                    round($centerY, 2),
+                    round($start['x'], 2),
+                    round($start['y'], 2),
+                    $radius,
+                    $radius,
+                    $largeArc,
+                    round($end['x'], 2),
+                    round($end['y'], 2),
+                );
 
-            $svg[] = '<path d="' . $path . '" fill="' . $palette[$index % count($palette)] . '" stroke="#ffffff" stroke-width="2"/>';
+                $svg[] = '<path d="' . $path . '" fill="' . $sliceColor . '" stroke="#ffffff" stroke-width="2"/>';
+            }
 
-            $legendY = 54 + ($index * 28);
+            $legendY = $legendStartY + ($index * $legendRowHeight);
             $percent = round(($value / $total) * 100, 1);
-            $svg[] = '<rect x="340" y="' . $legendY . '" width="14" height="14" rx="3" ry="3" fill="' . $palette[$index % count($palette)] . '"/>';
-            $svg[] = '<text x="362" y="' . ($legendY + 11) . '" font-size="10" fill="#17212b">' . $this->escape($this->truncateLabel((string) $label, 28)) . ' (' . $this->escape($this->formatNumericValue($value)) . ' | ' . $percent . '%)</text>';
+            $svg[] = '<rect x="340" y="' . $legendY . '" width="14" height="14" rx="3" ry="3" fill="' . $sliceColor . '"/>';
+            $svg[] = '<text x="362" y="' . ($legendY + 11) . '" font-size="10" fill="#17212b">' . $this->escape($this->truncateLabel((string) $label, 34)) . ' (' . $this->escape($this->formatNumericValue($value)) . ' | ' . $percent . '%)</text>';
 
             $startAngle = $endAngle;
         }
@@ -475,6 +531,49 @@ class ReportsController extends Controller
         return mb_strlen($label) > $limit
             ? mb_substr($label, 0, max($limit - 1, 1)) . '…'
             : $label;
+    }
+
+    private function formatPdfCellValue(string $column, mixed $value): string
+    {
+        if (is_array($value) || is_object($value)) {
+            $value = json_encode($value);
+        }
+
+        if ($value === null || $value === '') {
+            return '-';
+        }
+
+        $text = trim((string) $value);
+        $columnName = strtolower($column);
+
+        if ($this->looksLikeTimestampColumn($columnName) && preg_match('/^\d{4}-\d{2}-\d{2}[ tT]\d{2}:\d{2}:\d{2}/', $text) === 1) {
+            $timestamp = strtotime($text);
+
+            if ($timestamp !== false) {
+                return date('Y-m-d H:i:s', $timestamp);
+            }
+        }
+
+        if ($this->looksLikeDateColumn($columnName) && preg_match('/^\d{4}-\d{2}-\d{2}/', $text) === 1) {
+            $timestamp = strtotime($text);
+
+            if ($timestamp !== false) {
+                return date('Y-m-d', $timestamp);
+            }
+        }
+
+        return $text;
+    }
+
+    private function looksLikeTimestampColumn(string $column): bool
+    {
+        return preg_match('/(^|_)(created_at|updated_at|deleted_at|timestamp|datetime|time)$/', $column) === 1;
+    }
+
+    private function looksLikeDateColumn(string $column): bool
+    {
+        return preg_match('/(^|_)(date|expiry|expires|expiration|valid_until)$/', $column) === 1
+            || $this->looksLikeTimestampColumn($column);
     }
 
     private function formatNumericValue(float|int $value): string

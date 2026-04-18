@@ -12,6 +12,8 @@ use App\Http\Controllers\Api\ReportsController;
 use App\Http\Controllers\Api\ChatController;
 use App\Http\Controllers\Api\ChatbotController;
 use App\Http\Controllers\Api\DashboardAnalyticsController;
+use App\Http\Controllers\Api\DeveloperDocumentationController;
+use App\Http\Controllers\Api\AuditTrailController;
 
 Route::get('/health', fn() => response()->json(['ok' => true]));
 
@@ -28,21 +30,29 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/databases/{database}/tables', [ConnectedDatabaseController::class, 'tables'])->whereNumber('database');
         Route::get('/databases/{database}/schema', [SchemaController::class, 'inspect'])->whereNumber('database');
         Route::post('/analytics/report', [DashboardAnalyticsController::class, 'report']);
+        Route::post('/analytics/drilldown', [DashboardAnalyticsController::class, 'drilldown']);
 
         Route::post('/metrics/run', [MetricsController::class, 'run']);
         Route::post('/reports/pdf', [ReportsController::class, 'pdf']);
         Route::post('/reports/dashboard-pdf', [ReportsController::class, 'dashboardPdf']);
         Route::post('/chat', [ChatController::class, 'chat']);
         Route::post('/chatbot/context', [ChatbotController::class, 'context']);
+        Route::get('/chatbot/conversations', [ChatbotController::class, 'conversations']);
+        Route::get('/chatbot/conversations/{conversation}', [ChatbotController::class, 'conversation']);
         Route::get('/chatbot/knowledge/status', [ChatbotController::class, 'knowledgeStatus']);
         Route::post('/chatbot/ask', [ChatbotController::class, 'ask']);
         Route::get('/chatbot/history', [ChatbotController::class, 'history']);
         Route::post('/chatbot/reset', [ChatbotController::class, 'reset']);
+        Route::post('/chatbot/export/table-pdf', [ChatbotController::class, 'exportTablePdf']);
 
         Route::middleware('role:admin')->group(function () {
             Route::apiResource('/users', UserController::class)->except(['index']);
             Route::get('/users', [UserController::class, 'index']);
             Route::patch('/users/{user}/approval', [UserController::class, 'updateApproval']);
+            Route::get('/audit-trails', [AuditTrailController::class, 'index']);
+
+            Route::get('/developers/documentation', [DeveloperDocumentationController::class, 'show']);
+            Route::get('/developers/documentation/pdf', [DeveloperDocumentationController::class, 'downloadPdf']);
 
             Route::get('/databases/options', [ConnectedDatabaseController::class, 'options']);
             Route::post('/databases', [ConnectedDatabaseController::class, 'store']);

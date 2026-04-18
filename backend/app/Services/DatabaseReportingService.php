@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\ConnectedDatabase;
 use App\Services\Database\Contracts\DatabaseConnector;
 use App\Services\Database\DatabaseConnectorException;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
@@ -136,6 +137,133 @@ class DatabaseReportingService
                 'supports_date_filtering' => $dateColumn !== null,
                 'supports_period_aggregation' => $dateColumn !== null,
                 'supports_grouped_charts' => $groupColumn !== null || $dateColumn !== null,
+            ],
+        ];
+    }
+
+    public function buildDrilldown(ConnectedDatabase $database, DatabaseConnector $connector, array $input): array
+    {
+        $resources = $connector->listResources();
+        sort($resources);
+
+        $resource = $this->normalizeResource($input['resource'] ?? null, $resources);
+        $chartMode = $this->normalizeChartMode($input['chart_mode'] ?? null);
+        $bucketLabel = trim((string) ($input['bucket_label'] ?? ''));
+        $period = $this->normalizePeriod($input['period'] ?? 'none');
+        $page = max((int) ($input['page'] ?? 1), 1);
+        $perPage = max(min((int) ($input['per_page'] ?? 25), 100), 1);
+        $sortDirection = strtolower((string) ($input['sort_direction'] ?? 'asc')) === 'desc' ? 'desc' : 'asc';
+
+        if ($bucketLabel === '') {
+            throw new DatabaseConnectorException('Select a chart value first to load its matching rows.');
+        }
+
+        if ($chartMode === 'resource_overview') {
+            $resource = $this->normalizeResource($bucketLabel, $resources);
+            $schema = $connector->getSchema($resource)[0] ?? [
+                'resource' => $resource,
+                'table' => $resource,
+                'columns' => [],
+            ];
+            $columns = $schema['columns'] ?? [];
+            $sortBy = $this->pickColumnName($columns, $input['sort_by'] ?? null);
+            $tableFilters = array_filter([
+                'sort_by' => $sortBy,
+                'sort_direction' => $sortDirection,
+            ], fn($value) => $value !== null && $value !== '');
+            $table = $connector->paginateRows($resource, $tableFilters, $page, $perPage);
+
+            return [
+                'title' => 'Rows behind ' . $bucketLabel,
+                'description' => 'Showing the rows behind the selected ' . $connector->resourceType() . ' from the overview chart.',
+                'selection' => [
+                    'label' => $bucketLabel,
+                    'mode' => $chartMode,
+                    'resource' => $resource,
+                    'resource_type' => $connector->resourceType(),
+                    'group_by' => $connector->resourceType(),
+                    'period' => 'none',
+                ],
+                'table' => [
+                    'columns' => $this->resolveTableColumns($table['rows'], $columns),
+                    'rows' => $table['rows'],
+                    'pagination' => $table['pagination'],
+                ],
+            ];
+        }
+
+        if ($resource === null) {
+            throw new DatabaseConnectorException('Select a table or collection first before drilling into chart data.');
+        }
+
+        $schema = $connector->getSchema($resource)[0] ?? [
+            'resource' => $resource,
+            'table' => $resource,
+            'columns' => [],
+        ];
+        $columns = $schema['columns'] ?? [];
+        $dateColumn = $this->pickColumn($columns, $input['date_column'] ?? null, fn(array $column) => $this->isDateColumn($column));
+        $groupColumn = $this->pickColumnName($columns, $input['chart_group_by'] ?? null)
+            ?? $this->pickColumnName($columns, $input['group_column'] ?? null)
+            ?? $this->pickColumn($columns, null, fn(array $column) => $this->isGroupableColumn($column));
+        $sortBy = $this->pickColumnName($columns, $input['sort_by'] ?? null);
+
+        $dateFilters = $this->buildDateFilters($dateColumn, $input);
+        $drilldownFilters = $dateFilters;
+        $groupBy = null;
+
+        if ($chartMode === 'group') {
+            $groupBy = $groupColumn;
+
+            if (!$groupBy) {
+                throw new DatabaseConnectorException('The selected chart does not expose a drill-down grouping column.');
+            }
+
+            $drilldownFilters['equals'] = [[
+                'column' => $groupBy,
+                'value' => $bucketLabel,
+            ]];
+        }
+
+        if ($chartMode === 'date') {
+            $groupBy = $dateColumn ?? $this->pickColumnName($columns, $input['chart_group_by'] ?? null);
+
+            if (!$groupBy) {
+                throw new DatabaseConnectorException('The selected chart does not expose a drill-down date column.');
+            }
+
+            $drilldownFilters = $this->mergeDateRanges(
+                $dateFilters,
+                $this->buildBucketDateFilters($groupBy, $bucketLabel, $period),
+            );
+        }
+
+        $tableFilters = array_merge($drilldownFilters, array_filter([
+            'sort_by' => $sortBy,
+            'sort_direction' => $sortDirection,
+        ], fn($value) => $value !== null && $value !== ''));
+
+        $table = $connector->paginateRows($resource, $tableFilters, $page, $perPage);
+
+        return [
+            'title' => 'Rows behind ' . $bucketLabel,
+            'description' => match ($chartMode) {
+                'group' => 'Showing rows where ' . $groupBy . ' matches the selected chart segment.',
+                'date' => 'Showing rows that fall inside the selected ' . $this->periodLabel($period) . ' bucket.',
+                default => 'Showing rows behind the selected chart segment.',
+            },
+            'selection' => [
+                'label' => $bucketLabel,
+                'mode' => $chartMode,
+                'resource' => $resource,
+                'resource_type' => $connector->resourceType(),
+                'group_by' => $groupBy,
+                'period' => $chartMode === 'date' ? $period : 'none',
+            ],
+            'table' => [
+                'columns' => $this->resolveTableColumns($table['rows'], $columns),
+                'rows' => $table['rows'],
+                'pagination' => $table['pagination'],
             ],
         ];
     }
@@ -335,6 +463,18 @@ class DatabaseReportingService
         };
     }
 
+    private function normalizeChartMode(mixed $value): string
+    {
+        $mode = is_string($value) ? strtolower(trim($value)) : '';
+
+        return match ($mode) {
+            'date' => 'date',
+            'group' => 'group',
+            'resource_overview' => 'resource_overview',
+            default => throw new DatabaseConnectorException('The selected chart cannot be drilled into.'),
+        };
+    }
+
     private function normalizePeriod(string $period): string
     {
         return match (strtolower(trim($period))) {
@@ -357,6 +497,107 @@ class DatabaseReportingService
             'annual' => 'annually',
             default => 'without a period',
         };
+    }
+
+    private function buildDateFilters(?string $dateColumn, array $input): array
+    {
+        if (!$dateColumn) {
+            return [];
+        }
+
+        return array_filter([
+            'date_column' => $dateColumn,
+            'from' => $input['from'] ?? null,
+            'to' => $input['to'] ?? null,
+        ], fn($value) => $value !== null && $value !== '');
+    }
+
+    private function mergeDateRanges(array $baseFilters, array $bucketFilters): array
+    {
+        $dateColumn = $bucketFilters['date_column'] ?? $baseFilters['date_column'] ?? null;
+        if (!$dateColumn) {
+            return $baseFilters;
+        }
+
+        $fromCandidates = array_values(array_filter([
+            $baseFilters['from'] ?? null,
+            $bucketFilters['from'] ?? null,
+        ], fn($value) => $value !== null && $value !== ''));
+
+        $toCandidates = array_values(array_filter([
+            $baseFilters['to'] ?? null,
+            $bucketFilters['to'] ?? null,
+        ], fn($value) => $value !== null && $value !== ''));
+
+        return array_filter([
+            'date_column' => $dateColumn,
+            'from' => $fromCandidates === [] ? null : max($fromCandidates),
+            'to' => $toCandidates === [] ? null : min($toCandidates),
+        ], fn($value) => $value !== null && $value !== '');
+    }
+
+    private function buildBucketDateFilters(string $dateColumn, string $bucketLabel, string $period): array
+    {
+        [$from, $to] = $this->bucketDateRange($bucketLabel, $period);
+
+        return [
+            'date_column' => $dateColumn,
+            'from' => $from,
+            'to' => $to,
+        ];
+    }
+
+    private function bucketDateRange(string $bucketLabel, string $period): array
+    {
+        $label = trim($bucketLabel);
+
+        try {
+            return match ($period) {
+                'daily' => $this->calendarRange(Carbon::parse($label)->startOfDay(), Carbon::parse($label)->endOfDay()),
+                'weekly' => $this->weeklyBucketRange($label),
+                'monthly' => $this->calendarRange(Carbon::parse($label)->startOfMonth(), Carbon::parse($label)->endOfMonth()),
+                'semiannual' => $this->semiannualBucketRange($label),
+                'annual' => $this->calendarRange(Carbon::parse($label)->startOfYear(), Carbon::parse($label)->endOfYear()),
+                default => throw new DatabaseConnectorException('The selected report period does not support drill-down.'),
+            };
+        } catch (Throwable $exception) {
+            throw new DatabaseConnectorException('Unable to determine the selected chart bucket range.');
+        }
+    }
+
+    private function weeklyBucketRange(string $bucketLabel): array
+    {
+        if (preg_match('/^(?<year>\d{4})-W(?<week>\d{2})$/', $bucketLabel, $matches) === 1) {
+            $start = Carbon::now()->setISODate((int) $matches['year'], (int) $matches['week'])->startOfDay();
+
+            return $this->calendarRange($start, (clone $start)->endOfWeek(Carbon::SUNDAY));
+        }
+
+        $start = Carbon::parse($bucketLabel)->startOfWeek(Carbon::MONDAY);
+
+        return $this->calendarRange($start, (clone $start)->endOfWeek(Carbon::SUNDAY));
+    }
+
+    private function semiannualBucketRange(string $bucketLabel): array
+    {
+        if (preg_match('/^(?<year>\d{4})-H(?<half>[12])$/', $bucketLabel, $matches) === 1) {
+            $startMonth = (int) $matches['half'] === 1 ? 1 : 7;
+            $start = Carbon::create((int) $matches['year'], $startMonth, 1)->startOfDay();
+
+            return $this->calendarRange($start, (clone $start)->addMonths(5)->endOfMonth());
+        }
+
+        $start = Carbon::parse($bucketLabel)->startOfDay();
+
+        return $this->calendarRange($start, (clone $start)->addMonths(5)->endOfMonth());
+    }
+
+    private function calendarRange(Carbon $from, Carbon $to): array
+    {
+        return [
+            $from->toDateString(),
+            $to->toDateTimeString(),
+        ];
     }
 
     private function pickColumn(array $columns, mixed $preferred, callable $predicate): ?string

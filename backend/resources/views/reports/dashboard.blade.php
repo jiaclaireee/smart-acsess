@@ -4,8 +4,9 @@
   <meta charset="utf-8">
   <title>{{ $title }}</title>
   <style>
-    body { font-family: DejaVu Sans, sans-serif; font-size: 11px; color: #17212b; margin: 0; }
-    .page { padding: 26px 28px; }
+    @page { margin: 36pt; }
+    body { font-family: DejaVu Sans, sans-serif; font-size: 10px; color: #17212b; margin: 0; }
+    .page { padding: 0; }
     .header { border-bottom: 2px solid #0f5b3b; padding-bottom: 12px; margin-bottom: 18px; }
     .brand { display: inline-block; padding: 5px 10px; background: #0f5b3b; color: #fff; border-radius: 12px; font-size: 10px; letter-spacing: .08em; }
     .title { font-size: 22px; font-weight: bold; margin: 10px 0 4px 0; }
@@ -26,8 +27,11 @@
     .chart-bar-wrap { background: #edf2f6; border-radius: 999px; height: 12px; overflow: hidden; }
     .chart-bar { background: #0f5b3b; height: 12px; }
     .chart-value { font-size: 10px; color: #5a6570; margin-top: 2px; }
-    .data-table th { background: #0f5b3b; color: #fff; padding: 7px 8px; text-align: left; font-size: 10px; }
-    .data-table td { border: 1px solid #d9e1e8; padding: 6px 8px; font-size: 9px; vertical-align: top; word-break: break-word; }
+    .data-table { table-layout: fixed; }
+    .data-table thead { display: table-header-group; }
+    .data-table tr { page-break-inside: avoid; }
+    .data-table th { background: #0f5b3b; color: #fff; padding: 6px 6px; text-align: left; font-size: 9px; line-height: 1.25; white-space: normal; overflow-wrap: anywhere; word-break: break-word; }
+    .data-table td { border: 1px solid #d9e1e8; padding: 5px 6px; font-size: 8px; line-height: 1.35; vertical-align: top; white-space: normal; overflow-wrap: anywhere; word-break: break-word; }
     .small { font-size: 10px; }
     .footer-note { margin-top: 10px; font-size: 10px; color: #5a6570; }
   </style>

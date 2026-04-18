@@ -49,6 +49,74 @@ class ChatbotFeatureTest extends TestCase
             ->assertJsonPath('table.rows.1.record_count', 30);
     }
 
+    public function test_chatbot_persists_conversations_and_can_reopen_them(): void
+    {
+        Sanctum::actingAs($this->makeApprovedEndUser());
+        $database = $this->makeDatabaseConnection('SP Database');
+        $this->mockVehicleKnowledgeIndex([$database]);
+        $this->mockConnectorManager();
+
+        $response = $this->postJson('/api/chatbot/ask', [
+            'prompt' => 'Show monthly trend for vehicle_movements.',
+            'new_conversation' => true,
+        ]);
+
+        $conversationId = $response->json('conversation.id');
+
+        $response->assertOk()
+            ->assertJsonPath('conversation.title', 'Show monthly trend for vehicle_movements.')
+            ->assertJsonCount(2, 'history');
+
+        $this->getJson('/api/chatbot/conversations')
+            ->assertOk()
+            ->assertJsonPath('conversations.0.id', (string) $conversationId);
+
+        $this->getJson('/api/chatbot/conversations/' . $conversationId)
+            ->assertOk()
+            ->assertJsonPath('conversation.id', (string) $conversationId)
+            ->assertJsonPath('messages.0.content', 'Show monthly trend for vehicle_movements.')
+            ->assertJsonCount(2, 'messages');
+    }
+
+    public function test_chatbot_can_search_saved_conversations_by_title_or_message_keyword(): void
+    {
+        Sanctum::actingAs($this->makeApprovedEndUser());
+        $database = $this->makeDatabaseConnection('Vehicle Registration Database (simulation)');
+        $this->mockVehicleKnowledgeIndex([$database]);
+        $this->mockConnectorManager();
+
+        $this->postJson('/api/chatbot/ask', [
+            'prompt' => 'how many entries in Agapita?',
+            'new_conversation' => true,
+        ])->assertOk();
+
+        $this->getJson('/api/chatbot/conversations?search=agapita')
+            ->assertOk()
+            ->assertJsonPath('conversations.0.title', 'how many entries in Agapita?');
+    }
+
+    public function test_chatbot_table_results_can_be_exported_as_pdf(): void
+    {
+        Sanctum::actingAs($this->makeApprovedEndUser());
+
+        $response = $this->postJson('/api/chatbot/export/table-pdf', [
+            'title' => 'Vehicle Entries Summary',
+            'subtitle' => 'Agapita gate sample export',
+            'summary' => 'This report was generated from a chatbot table result.',
+            'table' => [
+                'columns' => ['gate_name', 'record_count'],
+                'rows' => [
+                    ['gate_name' => 'Agapita', 'record_count' => 37],
+                    ['gate_name' => 'Raymundo', 'record_count' => 19],
+                ],
+            ],
+        ]);
+
+        $response->assertOk();
+        $response->assertHeader('content-type', 'application/pdf');
+        $response->assertHeader('content-disposition');
+    }
+
     public function test_chatbot_can_answer_tagalog_growth_question(): void
     {
         Sanctum::actingAs($this->makeApprovedEndUser());

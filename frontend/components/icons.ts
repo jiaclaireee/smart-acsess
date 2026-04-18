@@ -1,4 +1,14 @@
 export const Icon = {
+  SidebarCollapse: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+    <path d="M4 5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5z"/>
+    <path d="M9 3v18"/>
+    <path d="m15 9-3 3 3 3"/>
+  </svg>`,
+  SidebarExpand: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+    <path d="M4 5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5z"/>
+    <path d="M9 3v18"/>
+    <path d="m12 9 3 3-3 3"/>
+  </svg>`,
   Dashboard: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
     <path d="M3 13h8V3H3v10z"/><path d="M13 21h8V11h-8v10z"/><path d="M13 3h8v6h-8V3z"/><path d="M3 21h8v-6H3v6z"/>
   </svg>`,
@@ -13,6 +23,12 @@ export const Icon = {
   Chatbot: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
     <path d="M12 2a7 7 0 0 0-7 7v3a3 3 0 0 1-1 2.24L2 16h20l-2-1.76A3 3 0 0 1 19 12V9a7 7 0 0 0-7-7z"/>
     <path d="M9 19h6"/><path d="M10 8h.01"/><path d="M14 8h.01"/><path d="M8.5 12a5 5 0 0 0 7 0"/>
+  </svg>`,
+  Developers: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+    <path d="M16 18l6-6-6-6"/><path d="M8 6l-6 6 6 6"/><path d="M14 4 10 20"/>
+  </svg>`,
+  AuditTrail: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+    <path d="M12 8v5l3 2"/><circle cx="12" cy="12" r="9"/><path d="M16.24 7.76l1.41-1.41"/><path d="M6.34 17.66l-1.41 1.41"/>
   </svg>`,
   Logout: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
     <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/>
